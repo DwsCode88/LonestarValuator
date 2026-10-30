@@ -36,7 +36,7 @@ def check(repo: str) -> dict | None:
     asset = next((a for a in data.get("assets", []) if a.get("name", "").lower() == ASSET_NAME.lower()), None)
     if not asset:
         return None
-    return {"version": tag, "url": asset["browser_download_url"], "notes": data.get("body", "")}
+    return {"version": tag, "url": asset["browser_download_url"], "notes": data.get("body") or ""}
 
 
 def install(url: str) -> bool:
