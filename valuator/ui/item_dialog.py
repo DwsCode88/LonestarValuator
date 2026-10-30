@@ -96,7 +96,9 @@ class ItemDialog(QDialog):
         self.b_cert = QPushButton("Look up"); self.b_cert.clicked.connect(self._lookup_cert)
         self.cert.returnPressed.connect(self._lookup_cert)
         cert_row = QHBoxLayout(); cert_row.setContentsMargins(0, 0, 0, 0)
-        cert_row.addWidget(self.cert, 1); cert_row.addWidget(self.b_cert)
+        self.b_cert_page = QPushButton("↗"); self.b_cert_page.setToolTip("Open the grader's cert page / pop report")
+        self.b_cert_page.setFixedWidth(30); self.b_cert_page.clicked.connect(self._open_cert_page)
+        cert_row.addWidget(self.cert, 1); cert_row.addWidget(self.b_cert); cert_row.addWidget(self.b_cert_page)
         self.year = QLineEdit(); self.year.setPlaceholderText("e.g. 1999")
         self.pop_total = QSpinBox(); self.pop_total.setRange(-1, 10_000_000); self.pop_total.setSpecialValueText("—")
         self.pop_higher = QSpinBox(); self.pop_higher.setRange(-1, 10_000_000); self.pop_higher.setSpecialValueText("—")
@@ -256,9 +258,14 @@ class ItemDialog(QDialog):
         self._cert_worker.finished.connect(lambda: self.b_cert.setEnabled(True))
         start_worker(self, self._cert_worker)
 
+    def _open_cert_page(self):
+        url = certs.cert_page_url(self.grader.currentText(), self.cert.text())
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
     def _cert_found(self, info: certs.CertInfo):
         if not info.ok:
-            self.status.setText(f"✗ Cert lookup: {info.message}")
+            self.status.setText(f"✗ Cert lookup: {info.message}\nClick ↗ to open the cert page and type the details in.")
             return
         for widget, val in ((self.name, info.name), (self.set_name, info.set_name), (self.number, info.number),
                             (self.year, info.year)):

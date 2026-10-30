@@ -25,6 +25,7 @@ DEFAULTS = {
     "appraiser_title": "Appraiser",
     "pricecharting_token": "",
     "psa_token": "",
+    "gemrate_key": "",
     "replacement_pct": 20.0,
     "chart_days": 365,
     "chart_in_pdf": True,

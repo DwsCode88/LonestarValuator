@@ -29,7 +29,7 @@ def test_parse_psa():
     assert info.ok and info.grade == "9" and info.year == "1999"
     assert info.name == "Charizard-Holo" and info.game == "Pokemon" and info.language == "English"
     assert info.pop_total == 1234 and info.pop_higher == 121
-    assert "PSA pop report" in info.pop_source
+    assert "PSA population as of" in info.pop_source
     jp = certs.parse_psa({"PSACert": {"Brand": "POKEMON JAPANESE SV4a-SHINY TREASURE EX", "Subject": "GENGAR",
                                       "CardGrade": "GEM MT 10", "TotalPopulation": "5,001"}}, "1")
     assert jp.language == "Japanese" and jp.set_name == "Sv4A-Shiny Treasure Ex" or jp.set_name
@@ -55,7 +55,6 @@ def test_parse_cgc():
 def test_lookup_other_graders():
     r = certs.lookup("BGS", "123", {})
     assert not r.ok and "manually" in r.message
-    assert not certs.lookup("PSA", "123", {}).ok        # no token
     assert not certs.lookup("PSA", "", {"psa_token": "x"}).ok
 
 
@@ -149,3 +148,35 @@ def test_psa_errors_and_header():
     r = certs.lookup_psa("123", "tok", _S(_R(200, "", {"PSACert": {"Subject": "PIKACHU", "CardGrade": "GEM MT 10",
                                                                  "TotalPopulation": 9}})))
     assert r.ok and r.grade == "10" and r.pop_total == 9
+
+
+PSA_PAGE = """<html><body><div>Cert Number</div><div>143072298</div><div>Item Grade</div><div>GEM MT 10</div>
+<div>Label Type</div><div>PSA Fugitive Ink Technology</div><div>Year</div><div>2025</div>
+<div>Brand/Title</div><div>POKEMON PFL EN-PHANTASMAL FLAMES</div><div>Subject</div><div>PALDEAN WOOPER</div>
+<div>Card Number</div><div>102</div><div>Category</div><div>TCG Cards</div>
+<div>Variety/Pedigree</div><div>ILLUSTRATION RARE</div></body></html>"""
+
+
+def test_parse_psa_page():
+    i = certs.parse_psa_page(PSA_PAGE, "143072298")
+    assert i.ok and i.name == "Paldean Wooper" and i.grade == "10" and i.year == "2025"
+    assert i.number == "102" and i.variant == "Illustration Rare" and i.game == "Pokemon"
+    assert not certs.parse_psa_page("<html>Access denied</html>", "1").ok
+
+
+def test_lookup_falls_back_and_merges_gemrate(monkeypatch):
+    denied = certs.CertInfo("PSA", "1", ok=False, message="PSA refused the request (403). Server said: approved customers")
+    monkeypatch.setattr(certs, "lookup_psa", lambda c, t: denied)
+    monkeypatch.setattr(certs, "lookup_psa_page", lambda c: certs.parse_psa_page(PSA_PAGE, c))
+    i = certs.lookup("PSA", "143072298", {"psa_token": "x"})
+    assert i.ok and i.name == "Paldean Wooper" and i.pop_total is None and "enter it" in i.message
+    gem = {"data": {"description": "2025 Pokemon Paldean Wooper", "grader_data": {
+        "grade": "10", "population_context": {"grade_population": 512, "population_higher": 0}}}}
+    monkeypatch.setattr(certs, "lookup_gemrate", lambda g, c, k: certs.parse_gemrate(gem, g, c))
+    i = certs.lookup("PSA", "143072298", {"psa_token": "x", "gemrate_key": "k"})
+    assert i.pop_total == 512 and i.pop_higher == 0 and "via GemRate" in i.pop_source
+    assert i.name == "Paldean Wooper"
+    monkeypatch.setattr(certs, "lookup_psa_page", lambda c: certs.CertInfo("PSA", c, ok=False, message="blocked"))
+    i = certs.lookup("BGS", "999", {"gemrate_key": "k"})
+    assert i.ok and i.pop_total == 512
+    assert certs.cert_page_url("PSA", "12-34") == "https://www.psacard.com/cert/1234"
