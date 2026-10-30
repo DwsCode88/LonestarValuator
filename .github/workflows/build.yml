@@ -32,10 +32,6 @@ jobs:
         run: echo "version=$(python -c 'import valuator; print(valuator.__version__)')" >> "$GITHUB_OUTPUT"
       - name: Build
         run: pyinstaller LonestarValuator.spec --noconfirm --clean
-      - uses: actions/upload-artifact@v4
-        with:
-          name: LonestarValuator-${{ steps.ver.outputs.version }}
-          path: dist/LonestarValuator.exe
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
