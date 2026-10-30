@@ -116,14 +116,49 @@ def lookup_psa(cert: str, token: str, session=None) -> CertInfo:
     if not token:
         return CertInfo("PSA", cert, ok=False,
                         message="Add your free PSA API token in Settings → Data sources (psacard.com/publicapi)")
+    token = clean_token(token)
     s = session or make_session()
-    r = s.get(PSA_URL.format(cert=cert), headers={"Authorization": f"Bearer {token}"}, timeout=TIMEOUT)
-    if r.status_code in (401, 403):
-        return CertInfo("PSA", cert, ok=False, message="PSA rejected the API token")
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json",
+               "User-Agent": "LonestarValuator/1.1 (+https://github.com/DwsCode88/LonestarValuator)"}
+    r = s.get(PSA_URL.format(cert=cert), headers=headers, timeout=TIMEOUT)
+    detail = _detail(r)
+    if r.status_code == 401:
+        return CertInfo("PSA", cert, ok=False,
+                        message=f"PSA rejected the token (401). Copy it again from psacard.com/publicapi – "
+                                f"tokens can expire.{detail}")
+    if r.status_code == 403:
+        return CertInfo("PSA", cert, ok=False, message=f"PSA refused the request (403).{detail}")
     if r.status_code == 429:
         return CertInfo("PSA", cert, ok=False, message="PSA daily API limit reached – try again tomorrow")
-    r.raise_for_status()
-    return parse_psa(r.json(), cert)
+    if r.status_code == 404:
+        return CertInfo("PSA", cert, ok=False, message=f"Cert {cert} not found at PSA")
+    if r.status_code >= 400:
+        return CertInfo("PSA", cert, ok=False, message=f"PSA error {r.status_code}.{detail}")
+    try:
+        data = r.json()
+    except ValueError:
+        return CertInfo("PSA", cert, ok=False, message=f"PSA sent a non-JSON reply.{detail}")
+    if isinstance(data, dict) and data.get("IsValidRequest") is False:
+        return CertInfo("PSA", cert, ok=False, message=f"PSA: {data.get('ServerMessage') or 'invalid request'}")
+    if isinstance(data, dict) and not data.get("PSACert") and data.get("ServerMessage"):
+        return CertInfo("PSA", cert, ok=False, message=f"PSA: {data['ServerMessage']}")
+    return parse_psa(data, cert)
+
+
+def clean_token(token: str) -> str:
+    """Accept the token however it was pasted: with 'Bearer ', quotes, spaces or line breaks."""
+    t = (token or "").strip().strip('"').strip("'").strip()
+    t = re.sub(r"(?i)^(authorization:\s*)?bearer\s+", "", t)
+    return re.sub(r"\s+", "", t)
+
+
+def _detail(r) -> str:
+    body = (r.text or "").strip().replace("\n", " ")
+    if not body:
+        return ""
+    if body.startswith("<"):
+        return " (blocked page returned – try again in a minute)"
+    return f" Server said: {body[:160]}"
 
 
 CGC_LABELS = {"card name": "name", "game": "game", "year": "year", "language": "language",

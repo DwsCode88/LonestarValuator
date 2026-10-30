@@ -112,3 +112,40 @@ def test_insurance_report_defaults_on(tmp_path):
     db = DB(tmp_path / "n.db")
     assert db.get_report(db.create_report("LSV", purpose="Insurance"))["show_replacement"] == 1
     assert db.get_report(db.create_report("LSV"))["show_replacement"] == 0
+
+
+def test_clean_token():
+    assert certs.clean_token("  Bearer abc.DEF-123  ") == "abc.DEF-123"
+    assert certs.clean_token('"abc\n123"') == "abc123"
+    assert certs.clean_token("Authorization: bearer xyz") == "xyz"
+
+
+class _R:
+    def __init__(self, code, body, js=None):
+        self.status_code, self.text, self._js = code, body, js
+
+    def json(self):
+        if self._js is None:
+            raise ValueError
+        return self._js
+
+
+class _S:
+    def __init__(self, r):
+        self.r, self.headers = r, None
+
+    def get(self, url, headers=None, timeout=None):
+        self.headers = headers
+        return self.r
+
+
+def test_psa_errors_and_header():
+    s = _S(_R(401, '{"Message":"Authorization has been denied"}'))
+    r = certs.lookup_psa("123", "Bearer tok", s)
+    assert not r.ok and "401" in r.message and "denied" in r.message
+    assert s.headers["Authorization"] == "Bearer tok"
+    r = certs.lookup_psa("123", "tok", _S(_R(200, "", {"IsValidRequest": False, "ServerMessage": "No data found"})))
+    assert not r.ok and "No data found" in r.message
+    r = certs.lookup_psa("123", "tok", _S(_R(200, "", {"PSACert": {"Subject": "PIKACHU", "CardGrade": "GEM MT 10",
+                                                                 "TotalPopulation": 9}})))
+    assert r.ok and r.grade == "10" and r.pop_total == 9

@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpin
                                QFormLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton,
                                QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
+from ..certs import clean_token
 from ..settings import DEFAULT_DISCLAIMER
 
 
@@ -102,7 +103,7 @@ class SettingsDialog(QDialog):
         self.s["logo_path"] = self.logo.text().strip()
         self.s["sources_enabled"] = {k: c.isChecked() for k, c in self.src_checks.items()}
         self.s["pricecharting_token"] = self.pc_token.text().strip()
-        self.s["psa_token"] = self.psa_token.text().strip()
+        self.s["psa_token"] = clean_token(self.psa_token.text())
         self.s["replacement_pct"] = round(self.rv.value(), 1)
         self.s["chart_days"] = self.chart_days.value()
         self.s["chart_in_pdf"] = self.chart_pdf.isChecked()

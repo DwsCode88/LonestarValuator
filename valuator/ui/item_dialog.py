@@ -233,7 +233,7 @@ class ItemDialog(QDialog):
 
     def _toggle_graded(self, on: bool):
         self.condition.setEnabled(not on)
-        for w in (self.grader, self.grade, self.cert, self.b_cert, self.pop_total, self.pop_higher):
+        for w in (self.grade, self.pop_total, self.pop_higher):
             w.setEnabled(on)
 
     def _pop_edited(self, *_):
@@ -246,6 +246,9 @@ class ItemDialog(QDialog):
         if not self.graded.isChecked():
             self.graded.setChecked(True)
         grader, cert = self.grader.currentText(), self.cert.text().strip()
+        if not cert:
+            self.status.setText("Enter a cert number first.")
+            return
         self.b_cert.setEnabled(False)
         self.status.setText(f"Looking up {grader} cert {cert}…")
         self._cert_worker = FuncWorker(certs.lookup, grader, cert, dict(self.settings))
