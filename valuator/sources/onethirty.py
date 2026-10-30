@@ -21,14 +21,11 @@ URL = "https://back.130point.com/sales/"
 class OneThirtyPointSource(Source):
     name = "130point"
 
-    def fetch(self, item: Item) -> SourceResult:
+    def fetch_item(self, item: Item) -> SourceResult:
         q = item.search_query()
-        data = {"query": q, "type": "2", "subcat": "-1"}
-        headers = {"Origin": "https://130point.com", "Referer": "https://130point.com/sales/",
-                   "Content-Type": "application/x-www-form-urlencoded"}
-        r = self.session.post(URL, data=data, headers=headers, timeout=TIMEOUT)
-        r.raise_for_status()
-        comps, skipped = parse_results(r.text, item)
+        html = self.fetch("https://130point.com/sales/", URL, "POST",
+                          form={"query": q, "type": "2", "subcat": "-1"}, as_json=False)
+        comps, skipped = parse_results(html, item)
         return SourceResult(self.name, comps=comps,
                             message=f"{len(comps)} matching sales ({skipped} filtered out)")
 

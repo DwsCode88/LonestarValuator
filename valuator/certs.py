@@ -183,11 +183,27 @@ def parse_cgc(html: str, cert: str) -> CertInfo:
     info.game = _guess_game(found.get("game", "")) or found.get("game", "")
     info.language = found.get("language") or "English"
     info.grade = grade_number(found.get("grade_desc", ""))
+    soup_lines = [ln.strip() for ln in BeautifulSoup(html, "html.parser").get_text("\n").split("\n") if ln.strip()]
+    for i, ln in enumerate(soup_lines[:-1]):
+        nxt = soup_lines[i + 1]
+        if ln.lower() == "in higher grades":
+            info.pop_higher = _int(nxt)
+        elif re.match(r"(?i)^in .+ grade$", ln) and "higher" not in ln.lower():
+            info.pop_total = _int(nxt)
     info.message = f"CGC {info.grade} · {info.year} {info.set_name} {info.name}"
     return info
 
 
-def lookup_cgc(cert: str, session=None) -> CertInfo:
+def lookup_cgc(cert: str, session=None, browser=None) -> CertInfo:
+    if browser is not None:
+        try:
+            html = browser.get_html(CGC_URL.format(cert=cert), wait_selector="text=Card Name", settle_ms=6000,
+                                    site="CGC")
+            info = parse_cgc(html, cert)
+            if info.ok:
+                return info
+        except Exception:
+            pass
     s = session or make_session()
     r = s.get(CGC_URL.format(cert=cert), timeout=TIMEOUT)
     if r.status_code == 404:
@@ -201,7 +217,9 @@ def lookup_cgc(cert: str, session=None) -> CertInfo:
 PSA_PAGE_URL = "https://www.psacard.com/cert/{cert}"
 PSA_LABELS = {"item grade": "grade_desc", "grade": "grade_desc", "year": "year", "brand/title": "brand",
               "brand": "brand", "subject": "name", "card number": "number", "category": "category",
-              "variety/pedigree": "variant", "variety": "variant"}
+              "variety/pedigree": "variant", "variety": "variant",
+              "population": "pop_total", "psa population": "pop_total", "pop": "pop_total",
+              "pop higher": "pop_higher", "population higher": "pop_higher", "psa pop higher": "pop_higher"}
 
 
 def _label_pairs(html: str, labels: dict) -> dict:
@@ -228,14 +246,24 @@ def parse_psa_page(html: str, cert: str) -> CertInfo:
                     variant=f.get("variant", "").title(), language=_guess_lang(brand),
                     game=_guess_game(brand, f.get("category", ""), f["name"]),
                     grade=grade_number(f.get("grade_desc", "")), grade_desc=f.get("grade_desc", ""),
-                    url=PSA_PAGE_URL.format(cert=cert))
+                    url=PSA_PAGE_URL.format(cert=cert),
+                    pop_total=_int(f.get("pop_total")), pop_higher=_int(f.get("pop_higher")))
     info.message = f"PSA {info.grade} · {info.year} {brand} {f['name']}".strip()
     return info
 
 
-def lookup_psa_page(cert: str, session=None) -> CertInfo:
+def lookup_psa_page(cert: str, session=None, browser=None) -> CertInfo:
+    url = PSA_PAGE_URL.format(cert=cert)
+    if browser is not None:
+        try:
+            html = browser.get_html(url, wait_selector="text=Subject", settle_ms=6000, site="PSA")
+            info = parse_psa_page(html, cert)
+            if info.ok:
+                return info
+        except Exception:
+            pass
     s = session or make_session()
-    r = s.get(PSA_PAGE_URL.format(cert=cert), timeout=TIMEOUT)
+    r = s.get(url, timeout=TIMEOUT)
     if r.status_code == 404:
         return CertInfo("PSA", cert, ok=False, message=f"Cert {cert} not found at PSA")
     if r.status_code in (403, 503):
@@ -318,12 +346,25 @@ def _safe(fn, *args) -> CertInfo:
         return CertInfo(args[0] if fn is lookup_gemrate else "", "", ok=False, message=f"{type(e).__name__}: {e}")
 
 
+def _browser(settings: dict):
+    from . import browser as browser_mod
+    svc = browser_mod.service(settings)
+    if svc is None:
+        return None
+    try:
+        svc.ensure_started()
+        return svc
+    except Exception:
+        return None
+
+
 def lookup(grader: str, cert: str, settings: dict) -> CertInfo:
     cert = re.sub(r"\D", "", cert or "")
     if not cert:
         return CertInfo(grader, cert, ok=False, message="Enter a cert number")
     notes = []
     info: Optional[CertInfo] = None
+    br = _browser(settings)
     if grader == "PSA":
         token = settings.get("psa_token", "")
         if token:
@@ -333,12 +374,12 @@ def lookup(grader: str, cert: str, settings: dict) -> CertInfo:
             else:
                 notes.append(f"PSA API: {api.message.split('.')[0]}")
         if info is None:
-            page = _safe(lookup_psa_page, cert)
+            page = _safe(lookup_psa_page, cert, None, br)
             info = page if page.ok else None
             if not page.ok:
                 notes.append(page.message)
     elif grader == "CGC":
-        page = _safe(lookup_cgc, cert)
+        page = _safe(lookup_cgc, cert, None, br)
         info = page if page.ok else None
         if not page.ok:
             notes.append(page.message)

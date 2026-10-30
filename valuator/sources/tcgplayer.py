@@ -16,6 +16,7 @@ SEARCH_URL = "https://mp-search-api.tcgplayer.com/v1/search/request"
 SALES_URL = "https://mpapi.tcgplayer.com/v2/product/{pid}/latestsales"
 IMAGE_URL = "https://tcgplayer-cdn.tcgplayer.com/product/{pid}_in_400x400.jpg"
 PRODUCT_URL = "https://www.tcgplayer.com/product/{pid}"
+ORIGIN = "https://www.tcgplayer.com/"
 
 PRODUCT_LINES = {
     "Pokemon": "pokemon", "Magic: The Gathering": "magic", "One Piece": "one-piece-card-game",
@@ -53,9 +54,7 @@ class TCGplayerSource(Source):
             "settings": {"useFuzzySearch": True, "didYouMean": {}},
             "sort": {},
         }
-        r = self.session.post(SEARCH_URL, params={"q": q, "isList": "false"}, json=body, timeout=TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
+        data = self.fetch(ORIGIN, SEARCH_URL, "POST", json_body=body, params={"q": q, "isList": "false"})
         try:
             return data["results"][0]["results"]
         except (KeyError, IndexError, TypeError):
@@ -103,11 +102,10 @@ class TCGplayerSource(Source):
             "offset": 0,
             "limit": 25,
         }
-        r = self.session.post(SALES_URL.format(pid=pid), json=body, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json().get("data", []) or []
+        data = self.fetch(ORIGIN, SALES_URL.format(pid=pid), "POST", json_body=body)
+        return (data or {}).get("data", []) or []
 
-    def fetch(self, item: Item) -> SourceResult:
+    def fetch_item(self, item: Item) -> SourceResult:
         products = [] if item.tcg_product_id else self.search(item)
         prod = self.best_match(item, products)
         if not prod:

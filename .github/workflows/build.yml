@@ -32,6 +32,12 @@ jobs:
         run: echo "version=$(python -c 'import valuator; print(valuator.__version__)')" >> "$GITHUB_OUTPUT"
       - name: Build
         run: pyinstaller LonestarValuator.spec --noconfirm --clean
+      - name: Self-test packaged exe drives Chrome
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\LonestarValuator.exe -ArgumentList "--selftest","chrome" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "Packaged exe could not drive Chrome (exit $($p.ExitCode))"; exit 1 }
+          Write-Host "Packaged exe drove Chrome OK"
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

@@ -33,13 +33,12 @@ class EbaySource(Source):
             params["LH_PrefLoc"] = "1"  # US only, keeps currency in USD
         return f"{SEARCH_URL}?{urlencode(params)}"
 
-    def fetch(self, item: Item) -> SourceResult:
+    def fetch_item(self, item: Item) -> SourceResult:
         url = self.build_url(item)
-        r = self.session.get(url, timeout=TIMEOUT)
-        r.raise_for_status()
-        comps, skipped = parse_results(r.text, item)
+        html = self.get_html(url, wait_selector="ul.srp-results, .srp-river-results, li.s-card, li.s-item")
+        comps, skipped = parse_results(html, item)
         msg = f"{len(comps)} matching sales ({skipped} listings filtered out)"
-        if "captcha" in r.text.lower()[:20000] and not comps:
+        if "captcha" in html.lower()[:20000] and not comps:
             return SourceResult(self.name, ok=False, message="eBay returned a bot check; try again later")
         return SourceResult(self.name, comps=comps, message=msg)
 

@@ -53,9 +53,9 @@ def test_parse_cgc():
 
 
 def test_lookup_other_graders():
-    r = certs.lookup("BGS", "123", {})
+    r = certs.lookup("BGS", "123", {"use_browser": False})
     assert not r.ok and "manually" in r.message
-    assert not certs.lookup("PSA", "", {"psa_token": "x"}).ok
+    assert not certs.lookup("PSA", "", {"psa_token": "x", "use_browser": False}).ok
 
 
 def test_replacement_value():
@@ -167,16 +167,16 @@ def test_parse_psa_page():
 def test_lookup_falls_back_and_merges_gemrate(monkeypatch):
     denied = certs.CertInfo("PSA", "1", ok=False, message="PSA refused the request (403). Server said: approved customers")
     monkeypatch.setattr(certs, "lookup_psa", lambda c, t: denied)
-    monkeypatch.setattr(certs, "lookup_psa_page", lambda c: certs.parse_psa_page(PSA_PAGE, c))
-    i = certs.lookup("PSA", "143072298", {"psa_token": "x"})
+    monkeypatch.setattr(certs, "lookup_psa_page", lambda c, *a: certs.parse_psa_page(PSA_PAGE, c))
+    i = certs.lookup("PSA", "143072298", {"psa_token": "x", "use_browser": False})
     assert i.ok and i.name == "Paldean Wooper" and i.pop_total is None and "enter it" in i.message
     gem = {"data": {"description": "2025 Pokemon Paldean Wooper", "grader_data": {
         "grade": "10", "population_context": {"grade_population": 512, "population_higher": 0}}}}
     monkeypatch.setattr(certs, "lookup_gemrate", lambda g, c, k: certs.parse_gemrate(gem, g, c))
-    i = certs.lookup("PSA", "143072298", {"psa_token": "x", "gemrate_key": "k"})
+    i = certs.lookup("PSA", "143072298", {"psa_token": "x", "gemrate_key": "k", "use_browser": False})
     assert i.pop_total == 512 and i.pop_higher == 0 and "via GemRate" in i.pop_source
     assert i.name == "Paldean Wooper"
-    monkeypatch.setattr(certs, "lookup_psa_page", lambda c: certs.CertInfo("PSA", c, ok=False, message="blocked"))
-    i = certs.lookup("BGS", "999", {"gemrate_key": "k"})
+    monkeypatch.setattr(certs, "lookup_psa_page", lambda c, *a: certs.CertInfo("PSA", c, ok=False, message="blocked"))
+    i = certs.lookup("BGS", "999", {"gemrate_key": "k", "use_browser": False})
     assert i.ok and i.pop_total == 512
     assert certs.cert_page_url("PSA", "12-34") == "https://www.psacard.com/cert/1234"

@@ -2,17 +2,21 @@
 from __future__ import annotations
 
 from datetime import date
+from urllib.parse import quote_plus
 from pathlib import Path
 
 from PySide6.QtCore import QDate, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QDialog, QMenu,
                                QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
                                QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
                                QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .. import certs, engine, history
+from .. import browser as browser_mod, capture, certs, engine, history
+from ..sources.ebay import EbaySource
+from ..sources.pricecharting import SEARCH as PC_SEARCH
+from .find_card import FindCardDialog, apply_product
 from ..gather import apply_valuation, cache_image, comps_from_csv
 from ..models import GAMES, GRADERS, GRADES, RAW_CONDITIONS, Comp, Item
 from ..report_pdf import money
@@ -78,6 +82,9 @@ class ItemDialog(QDialog):
         ib.addWidget(b_photo); ib.addWidget(b_clear)
         lv.addWidget(self.img, 0, Qt.AlignHCenter); lv.addLayout(ib)
 
+        self.b_find = QPushButton("🔍  Find card (pick exact printing)…"); self.b_find.clicked.connect(self._find_card)
+        self.b_find.setObjectName("primary")
+        lv.addWidget(self.b_find)
         g = QGroupBox("Card"); f = QFormLayout(g)
         self.game = QComboBox(); self.game.addItems(GAMES); self.game.setEditable(True)
         self.name = QLineEdit(); self.name.setPlaceholderText("e.g. Charizard ex")
@@ -107,7 +114,7 @@ class ItemDialog(QDialog):
         pop_row.addWidget(QLabel("higher")); pop_row.addWidget(self.pop_higher, 1)
         self.pop_note = QLabel(""); self.pop_note.setStyleSheet("color:#667; font-size:11px;")
         self.tcg_id = QLineEdit(); self.tcg_id.setPlaceholderText("optional – forces exact product")
-        self.pc_id = QLineEdit(); self.pc_id.setPlaceholderText("optional")
+        self.pc_id = QLineEdit(); self.pc_id.setPlaceholderText("optional – PriceCharting page URL")
         f.addRow("", self.graded)
         f.addRow("Grader", self.grader); f.addRow("Cert #", cert_row)
         for lab, w in [("Game", self.game), ("Card name", self.name), ("Year", self.year), ("Set", self.set_name),
@@ -121,7 +128,7 @@ class ItemDialog(QDialog):
         self.graded.toggled.connect(self._toggle_graded)
         lv.addWidget(g)
         self.notes = QPlainTextEdit(); self.notes.setPlaceholderText("Notes shown on report (centering, print lines…)")
-        self.notes.setMaximumHeight(70)
+        self.notes.setMinimumHeight(48); self.notes.setMaximumHeight(70)
         lv.addWidget(self.notes)
         lv.addStretch()
         split.addWidget(left)
@@ -130,13 +137,22 @@ class ItemDialog(QDialog):
         right = QWidget(); rv = QVBoxLayout(right); rv.setContentsMargins(6, 0, 0, 0)
         bar = QHBoxLayout()
         self.b_fetch = QPushButton("⟳  Gather sales data"); self.b_fetch.setDefault(False)
-        self.b_fetch.setStyleSheet("font-weight:600; padding:6px 14px;")
+        self.b_fetch.setObjectName("primary")
         self.b_fetch.clicked.connect(self._fetch)
         b_add = QPushButton("+ Manual comp"); b_add.clicked.connect(self._add_manual)
         b_csv = QPushButton("Import CSV…"); b_csv.clicked.connect(self._import_csv)
         b_del = QPushButton("Delete selected"); b_del.clicked.connect(self._delete_comps)
         b_open = QPushButton("Open link"); b_open.clicked.connect(self._open_link)
-        for b in (self.b_fetch, b_add, b_csv, b_del, b_open):
+        b_chrome = QPushButton("Search in Chrome ▾")
+        m = QMenu(b_chrome)
+        for label, key in [("Card Ladder", "cardladder"), ("eBay sold listings", "ebay"), ("130point", "130point"),
+                           ("PriceCharting", "pricecharting"), ("Grader cert page / pop", "cert")]:
+            m.addAction(label, lambda k=key: self._open_in_chrome(k))
+        b_chrome.setMenu(m)
+        self.b_capture = QPushButton("⤓ Capture sales from Chrome")
+        self.b_capture.setToolTip("Reads the sales on the page open in Chrome (Card Ladder, Goldin, Fanatics…)")
+        self.b_capture.clicked.connect(self._capture)
+        for b in (self.b_fetch, b_add, b_csv, b_chrome, self.b_capture, b_del, b_open):
             bar.addWidget(b)
         bar.addStretch()
         rv.addLayout(bar)
@@ -255,13 +271,122 @@ class ItemDialog(QDialog):
         self.status.setText(f"Looking up {grader} cert {cert}…")
         self._cert_worker = FuncWorker(certs.lookup, grader, cert, dict(self.settings))
         self._cert_worker.done.connect(self._cert_found)
-        self._cert_worker.finished.connect(lambda: self.b_cert.setEnabled(True))
+        self._cert_worker.finished.connect(self._cert_lookup_finished)
         start_worker(self, self._cert_worker)
 
-    def _open_cert_page(self):
-        url = certs.cert_page_url(self.grader.currentText(), self.cert.text())
-        if url:
+    # ---------- find card / Chrome ----------
+    def _find_card(self):
+        q = " ".join(x for x in [self.name.text().strip(), self.number.text().split("/")[0].strip()] if x)
+        dlg = FindCardDialog(self, dict(self.settings), q, self.game.currentText())
+        if dlg.exec() and dlg.chosen:
+            it = self._read()
+            it.variant = ""
+            apply_product(it, dlg.chosen)
+            it.image_path = it.image_path if it.image_path else ""
+            self.name.setText(it.name); self.set_name.setText(it.set_name); self.number.setText(it.number)
+            self.variant.setCurrentText(it.variant); self.tcg_id.setText(it.tcg_product_id)
+            self.pc_id.setText(""); self.item.pc_product_id = ""
+            self._remember_key()
+            self._show_image()
+            self.status.setText(f"✓ Using {dlg.chosen.get('productName')} – {dlg.chosen.get('setName')}. "
+                                "Now Gather sales data.")
+
+    def _chrome(self):
+        svc = browser_mod.service(self.settings)
+        if svc is None:
+            QMessageBox.warning(self, "Chrome", "Chrome mode is off (Settings → Browser).")
+            return None
+        return svc
+
+    def _open_in_chrome(self, key: str):
+        it = self._read()
+        q = it.search_query()
+        if key == "cardladder":
+            url = "https://app.cardladder.com/"
+        elif key == "ebay":
+            url = EbaySource(self.settings, use_browser=False).build_url(it)
+        elif key == "130point":
+            url = "https://130point.com/sales/"
+        elif key == "pricecharting":
+            url = PC_SEARCH.format(q=quote_plus(it.search_query(include_grade=False)))
+        else:
+            url = certs.cert_page_url(it.grader, it.cert) or "https://www.psacard.com/pop"
+        svc = self._chrome()
+        if svc is None:
             QDesktopServices.openUrl(QUrl(url))
+            return
+        self.status.setText(f"Opening Chrome… search for: {q}" if key in ("cardladder", "130point") else "Opening Chrome…")
+        self._chrome_key = key
+        w = FuncWorker(self._safe_show, svc, url)
+        w.done.connect(self._chrome_opened)
+        self._chrome_worker = w
+        start_worker(self, w)
+
+    def _chrome_opened(self, err):
+        if err:
+            self.status.setText(f"✗ Chrome: {err}")
+        elif self._chrome_key in ("cardladder", "130point"):
+            self.status.setText("In Chrome: search for the card, open its sales, then click ⤓ Capture sales from Chrome.")
+        else:
+            self.status.setText("Opened in Chrome.")
+
+    @staticmethod
+    def _safe_show(svc, url):
+        try:
+            svc.show(url)
+            return ""
+        except Exception as e:
+            return str(e)
+
+    def _capture(self):
+        svc = self._chrome()
+        if svc is None:
+            return
+        it = self._read()
+        self.b_capture.setEnabled(False)
+        self.status.setText("Reading the page open in Chrome…")
+
+        def job():
+            try:
+                html, url = svc.capture_visible()
+                if not html:
+                    return [], 0, "", "No page is open in Chrome – use Search in Chrome first."
+                comps, skipped = capture.capture(html, url, it)
+                return comps, skipped, url, ""
+            except Exception as e:
+                return [], 0, "", f"{type(e).__name__}: {e}"
+        w = FuncWorker(job)
+        w.done.connect(self._captured)
+        w.finished.connect(self._capture_finished)
+        self._capture_worker = w
+        start_worker(self, w)
+
+    def _capture_finished(self):
+        self.b_capture.setEnabled(True)
+
+    def _captured(self, res):
+        comps, skipped, url, err = res
+        if err:
+            self.status.setText(f"✗ {err}")
+            return
+        known = {(c.source, c.price, c.sale_date, c.title[:60]) for c in self.comps}
+        new = [c for c in comps if (c.source, c.price, c.sale_date, c.title[:60]) not in known]
+        self.comps.extend(new)
+        self._refresh_comps()
+        src = capture.site_name(url)
+        if new:
+            self.status.setText(f"✓ Captured {len(new)} sales from {src}"
+                                + (f" ({skipped} didn't match this card)" if skipped else ""))
+        else:
+            self.status.setText(f"No matching sales found on that {src} page"
+                                + (f" ({skipped} rows didn't match this card)" if skipped else "")
+                                + ". Open the card's sales list and try again.")
+
+    def _open_cert_page(self):
+        self._open_in_chrome("cert")
+
+    def _cert_lookup_finished(self):
+        self.b_cert.setEnabled(True)
 
     def _cert_found(self, info: certs.CertInfo):
         if not info.ok:

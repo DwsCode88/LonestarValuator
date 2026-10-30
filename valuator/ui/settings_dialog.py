@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QLabel, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton,
                                QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
@@ -86,6 +86,21 @@ class SettingsDialog(QDialog):
         v.addWidget(self.disc); v.addWidget(rb)
         tabs.addTab(w, "Disclaimer")
 
+        # Browser
+        w = QWidget(); f = QFormLayout(w)
+        self.use_browser = QCheckBox("Gather data through Chrome (recommended – fewer blocks, saved sign-ins)")
+        self.use_browser.setChecked(bool(settings.get("use_browser", True)))
+        self.channel = QComboBox(); self.channel.addItems(["chrome", "msedge"])
+        self.channel.setCurrentText(settings.get("browser_channel", "chrome"))
+        f.addRow(self.use_browser)
+        f.addRow("Browser", self.channel)
+        note = QLabel("Chrome runs minimized with its own profile (separate from your normal Chrome). "
+                      "It pops up only when a site needs you – a sign-in or a human check. "
+                      "Use the Chrome menu to sign in to Card Ladder, eBay and others once.")
+        note.setWordWrap(True); note.setObjectName("muted")
+        f.addRow(note)
+        tabs.addTab(w, "Browser")
+
         # Updates
         w = QWidget(); f = QFormLayout(w)
         self.repo = QLineEdit(settings.get("update_repo", ""))
@@ -119,5 +134,7 @@ class SettingsDialog(QDialog):
         self.s["show_comps_in_pdf"] = self.show_n.value()
         self.s["disclaimer"] = self.disc.toPlainText().strip()
         self.s["update_repo"] = self.repo.text().strip()
+        self.s["use_browser"] = self.use_browser.isChecked()
+        self.s["browser_channel"] = self.channel.currentText()
         self.s.save()
         self.accept()

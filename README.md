@@ -14,6 +14,22 @@ Windows app for building customer card appraisals. Enter cards (raw or graded), 
 
 eBay, 130point and TCGplayer have no open public API for this, so the app uses the same pages/endpoints their websites use. If one of them changes or blocks a request, that source shows ✗ with the reason and the valuation continues with the others. The parsers live in `valuator/sources/` if one needs adjusting.
 
+## Chrome engine (v1.2)
+
+The app drives Google Chrome (Microsoft Edge if Chrome isn't installed) to gather data – the same way you'd browse – so eBay, 130point, TCGplayer, PriceCharting, PSA and CGC block it far less, JavaScript-only data (CGC population) loads, and sign-ins are remembered.
+
+- Chrome runs **minimized** with its own profile in `%APPDATA%\LonestarValuator\chrome-profile`, separate from your normal Chrome.
+- If a site shows a "verify you're human" check, a yellow banner appears and the Chrome window pops up – finish the check and the app carries on.
+- **Chrome menu → Sign in to…** opens Card Ladder, eBay, PSA, TCGplayer or PriceCharting once; the login is kept.
+- If Chrome can't start, every source falls back to direct requests. Settings → Browser turns Chrome mode off or switches to Edge.
+
+## Faster workflow (v1.2)
+
+- **Quick-add bar:** scan/type a cert # (or pick Raw/PSA/BGS/CGC… and type a card name) and press Enter. Certs are looked up, cards are valued in the background, and each row shows live status.
+- **Find card:** search TCGplayer's catalog with pictures and pick the exact printing – stops wrong-card comps.
+- **PriceCharting without a token:** reads the public product page – guide values for every grade plus its sold listings (eBay, Goldin, TCGplayer…).
+- **Capture sales from Chrome:** open any sales page (Card Ladder, Goldin, Fanatics, Heritage…) via *Search in Chrome*, then click **Capture** – matching sales are added as comps.
+
 ## Cert lookup & population (v1.1)
 
 Tick **Graded**, pick the grader, type the cert # and press **Look up** (or Enter).
