@@ -54,13 +54,7 @@ Settings: store info, logo, appraiser name, report number prefix, accent color, 
 
 ## Building the exe
 
-**GitHub (recommended):** push this folder to a repo (default update repo is `DwsCode88/LonestarValuator`), then tag a release:
-
-```
-git tag v1.0.0 && git push origin v1.0.0
-```
-
-The workflow runs the tests, builds `LonestarValuator.exe` and attaches it to the release. **Help → Check for updates** in the app downloads newer releases from that repo and restarts itself. Bump `__version__` in `valuator/__init__.py` before each tag.
+**GitHub (automatic):** every push to `main` runs the tests, builds `LonestarValuator.exe` and publishes it as release `v<__version__>` (from `valuator/__init__.py`). Bump `__version__` to ship a new release; pushing without a bump just refreshes the current release's exe. **Help → Check for updates** in the app downloads newer releases and restarts itself (requires the releases to be publicly downloadable).
 
 **Locally on Windows:** install Python 3.11+, double-click `build.bat` → `dist\LonestarValuator.exe`.
 
