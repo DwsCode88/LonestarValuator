@@ -1,6 +1,7 @@
 """Add / edit a card, review gathered comps, and set the value."""
 from __future__ import annotations
 
+import re
 from datetime import date
 from urllib.parse import quote_plus
 from pathlib import Path
@@ -105,7 +106,11 @@ class ItemDialog(QDialog):
         cert_row = QHBoxLayout(); cert_row.setContentsMargins(0, 0, 0, 0)
         self.b_cert_page = QPushButton("↗"); self.b_cert_page.setToolTip("Open the grader's cert page / pop report")
         self.b_cert_page.setFixedWidth(30); self.b_cert_page.clicked.connect(self._open_cert_page)
+        self.b_cert_read = QPushButton("📄"); self.b_cert_read.setFixedWidth(30)
+        self.b_cert_read.setToolTip("Read page – fill details from the cert page open in Chrome")
+        self.b_cert_read.clicked.connect(self._read_cert_page)
         cert_row.addWidget(self.cert, 1); cert_row.addWidget(self.b_cert); cert_row.addWidget(self.b_cert_page)
+        cert_row.addWidget(self.b_cert_read)
         self.year = QLineEdit(); self.year.setPlaceholderText("e.g. 1999")
         self.pop_total = QSpinBox(); self.pop_total.setRange(-1, 10_000_000); self.pop_total.setSpecialValueText("—")
         self.pop_higher = QSpinBox(); self.pop_higher.setRange(-1, 10_000_000); self.pop_higher.setSpecialValueText("—")
@@ -382,6 +387,42 @@ class ItemDialog(QDialog):
                                 + (f" ({skipped} rows didn't match this card)" if skipped else "")
                                 + ". Open the card's sales list and try again.")
 
+    def _read_cert_page(self):
+        svc = self._chrome()
+        if svc is None:
+            return
+        grader, cert = self.grader.currentText(), re.sub(r"\D", "", self.cert.text())
+        self.status.setText("Reading the cert page open in Chrome…")
+
+        def job():
+            try:
+                data = svc.read_visible()
+                if not data.get("html"):
+                    return certs.CertInfo(grader, cert, ok=False, message="No page open in Chrome – click ↗ first")
+                if grader == "CGC":
+                    return certs.parse_cgc(data["html"], cert)
+                if not cert:
+                    m = re.search(r"/cert/(\d+)", data.get("url", ""))
+                    cert_found = m.group(1) if m else ""
+                else:
+                    cert_found = cert
+                info = certs.parse_psa_render(data, cert_found)
+                info.cert = cert_found
+                return info
+            except Exception as e:
+                return certs.CertInfo(grader, cert, ok=False, message=f"{type(e).__name__}: {e}")
+        w = FuncWorker(job)
+        w.done.connect(self._cert_read)
+        self._read_worker = w
+        start_worker(self, w)
+
+    def _cert_read(self, info):
+        if info.ok and info.cert and not self.cert.text().strip():
+            self.cert.setText(info.cert)
+        if info.ok and not self.graded.isChecked():
+            self.graded.setChecked(True)
+        self._cert_found(info)
+
     def _open_cert_page(self):
         self._open_in_chrome("cert")
 
@@ -390,7 +431,7 @@ class ItemDialog(QDialog):
 
     def _cert_found(self, info: certs.CertInfo):
         if not info.ok:
-            self.status.setText(f"✗ Cert lookup: {info.message}\nClick ↗ to open the cert page and type the details in.")
+            self.status.setText(f"✗ Cert lookup: {info.message}\n↗ opens the cert page in Chrome; 📄 reads it once it shows the card.")
             return
         for widget, val in ((self.name, info.name), (self.set_name, info.set_name), (self.number, info.number),
                             (self.year, info.year)):

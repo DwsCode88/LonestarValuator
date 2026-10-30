@@ -40,6 +40,10 @@ class H(http.server.BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         data = self.rfile.read(n).decode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+        if self.path == "/popapi":
+            self.wfile.write(json.dumps({"CertNumber": "81234567", "TotalPopulation": 1287,
+                                         "PopulationHigher": 121}).encode())
+            return
         self.wfile.write(json.dumps({"echo": data, "ctype": self.headers.get("Content-Type")}).encode())
 
 
@@ -141,3 +145,40 @@ def test_capture_generic():
     assert comps[0].source == "Card Ladder" and comps[0].manual and comps[0].url.endswith("/sale/1")
     assert skipped == 1
     assert comps[1].sale_date == date(2026, 10, 3)
+
+
+PSA_RENDER = """<html><body><div>Cert Number</div><div>81234567</div><div>Item Grade</div><div>MINT 9</div>
+<div>Year</div><div>1999</div><div>Brand/Title</div><div>POKEMON GAME</div><div>Subject</div><div>CHARIZARD-HOLO</div>
+<div>Card Number</div><div>4</div><div>Variety/Pedigree</div><div>1ST EDITION</div>
+<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"cert":{"CertNumber":"81234567",
+"SpecID":554320,"Subject":"CHARIZARD-HOLO","TotalPopulation":1287,"PopulationHigher":121}}}}</script></body></html>"""
+
+
+def test_psa_render_reads_embedded_pop():
+    from valuator import certs
+    info = certs.parse_psa_render({"html": PSA_RENDER, "text": "", "json": []}, "81234567")
+    assert info.ok and info.name == "Charizard-Holo" and info.grade == "9" and info.variant == "1St Edition" or info.variant
+    assert info.pop_total == 1287 and info.pop_higher == 121
+
+
+def test_psa_render_reads_api_json_and_text():
+    from valuator import certs
+    html = PSA_RENDER.split("<script")[0] + "</body></html>"
+    api = '{"PSACert":{"CertNumber":"81234567","TotalPopulation":"2,045","PopulationHigher":7}}'
+    info = certs.parse_psa_render({"html": html, "text": "", "json": [api, '{"other":{"Population":5}}']}, "81234567")
+    assert info.pop_total == 2045 and info.pop_higher == 7
+    info = certs.parse_psa_render({"html": html, "text": "PSA Population 310\nPop Higher 4", "json": []}, "81234567")
+    assert info.pop_total == 310 and info.pop_higher == 4
+
+
+def test_open_and_read_collects_background_json(env):
+    svc, base = env
+    PAGES["/cert/81234567"] = (PSA_RENDER.split("<script")[0] +
+        "<div id=pop>loading</div><script>fetch('/popapi',{method:'POST',body:'{}'}).then(r=>r.json())"
+        ".then(j=>{document.getElementById('pop').textContent='Population '+j.TotalPopulation})</script></body></html>")
+    data = svc.open_and_read(base + "/cert/81234567", r"Subject", wait_s=15, site="PSA")
+    assert data["ready"] and data["json"], data
+    from valuator import certs
+    info = certs.parse_psa_render(data, "81234567")
+    assert info.ok and info.name == "Charizard-Holo"
+    assert info.pop_total == 1287 and info.pop_higher == 121 and "Population 1287" in data["text"]

@@ -23,6 +23,10 @@ The app drives Google Chrome (Microsoft Edge if Chrome isn't installed) to gathe
 - **Chrome menu → Sign in to…** opens Card Ladder, eBay, PSA, TCGplayer or PriceCharting once; the login is kept.
 - If Chrome can't start, every source falls back to direct requests. Settings → Browser turns Chrome mode off or switches to Edge.
 
+## PSA cert lookup via Chrome (v1.2.1)
+
+Look up (or a cert # in the quick-add bar) opens the PSA cert page in a visible Chrome tab, waits for it to finish loading – finish any human check if one appears – then reads the card details and the population from the page and the data it loads in the background, and minimizes Chrome again. If the page is slow, leave it open and click **📄** next to the cert box once the card shows. Turn the visible tab off in Settings → Browser.
+
 ## Faster workflow (v1.2)
 
 - **Quick-add bar:** scan/type a cert # (or pick Raw/PSA/BGS/CGC… and type a card name) and press Enter. Certs are looked up, cards are valued in the background, and each row shows live status.

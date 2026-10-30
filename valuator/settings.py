@@ -25,6 +25,7 @@ DEFAULTS = {
     "appraiser_title": "Appraiser",
     "pricecharting_token": "",
     "use_browser": True,
+    "psa_visible": True,
     "browser_channel": "chrome",
     "psa_token": "",
     "gemrate_key": "",

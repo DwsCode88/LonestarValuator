@@ -92,7 +92,10 @@ class SettingsDialog(QDialog):
         self.use_browser.setChecked(bool(settings.get("use_browser", True)))
         self.channel = QComboBox(); self.channel.addItems(["chrome", "msedge"])
         self.channel.setCurrentText(settings.get("browser_channel", "chrome"))
+        self.psa_visible = QCheckBox("Open the PSA cert page in Chrome during lookups and read it")
+        self.psa_visible.setChecked(bool(settings.get("psa_visible", True)))
         f.addRow(self.use_browser)
+        f.addRow(self.psa_visible)
         f.addRow("Browser", self.channel)
         note = QLabel("Chrome runs minimized with its own profile (separate from your normal Chrome). "
                       "It pops up only when a site needs you – a sign-in or a human check. "
@@ -135,6 +138,7 @@ class SettingsDialog(QDialog):
         self.s["disclaimer"] = self.disc.toPlainText().strip()
         self.s["update_repo"] = self.repo.text().strip()
         self.s["use_browser"] = self.use_browser.isChecked()
+        self.s["psa_visible"] = self.psa_visible.isChecked()
         self.s["browser_channel"] = self.channel.currentText()
         self.s.save()
         self.accept()

@@ -261,6 +261,86 @@ class BrowserService:
             headers = {"Content-Type": "application/json", **(headers or {})}
         return self.call(lambda: self._fetch(origin_url, url, method, body, headers or {}, as_json), timeout)
 
+    async def _open_and_read(self, url: str, ready_regex: str, wait_s: int, keep_open: bool, site: str) -> dict:
+        """Open url in a visible tab, wait until its text matches ready_regex (the user can pass any
+        human check meanwhile), then return the rendered HTML, visible text and every JSON response
+        the page loaded in the background."""
+        page = await self.ctx.new_page()
+        json_bodies: list[str] = []
+
+        async def on_response(resp):
+            try:
+                ctype = resp.headers.get("content-type", "")
+                if "json" in ctype and resp.request.resource_type in ("xhr", "fetch", "document"):
+                    body = await resp.text()
+                    if len(body) < 2_000_000:
+                        json_bodies.append(body)
+            except Exception:
+                pass
+        page.on("response", lambda r: asyncio.ensure_future(on_response(r)))
+        self._visible_page = page
+        await self._show(page)
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        except Exception:
+            pass
+        rx = re.compile(ready_regex, re.I)
+        text, prompted = "", False
+        for i in range(wait_s):
+            try:
+                text = await page.inner_text("body")
+                title = await page.title()
+            except Exception:
+                await asyncio.sleep(1)
+                continue
+            if rx.search(text) and not self._looks_blocked(title, text):
+                break
+            if self._looks_blocked(title, text) and not prompted and self.on_attention:
+                self.on_attention(f"{site} wants a quick human check – finish it in the Chrome window")
+                prompted = True
+            await asyncio.sleep(1)
+        # let late background requests (population, images) finish
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        await asyncio.sleep(1.5)
+        html = await page.content()
+        try:
+            text = await page.inner_text("body")
+        except Exception:
+            pass
+        frames = []
+        for fr in page.frames[1:]:
+            try:
+                frames.append(await fr.content())
+            except Exception:
+                pass
+        if prompted and self.on_attention_done:
+            self.on_attention_done()
+        ready = bool(rx.search(text))
+        if ready and not keep_open:
+            await self._hide()
+        return {"html": html, "text": text, "json": json_bodies, "frames": frames, "url": page.url,
+                "ready": ready}
+
+    def open_and_read(self, url: str, ready_regex: str, wait_s: int = 60, keep_open: bool = False,
+                      site: str = "") -> dict:
+        return self.call(lambda: self._open_and_read(url, ready_regex, wait_s, keep_open, site), wait_s + 60)
+
+    def read_visible(self) -> dict:
+        """Rendered HTML + text of the tab currently shown (after the user navigated/solved checks)."""
+        async def grab():
+            page = self._visible_page if self._visible_page and not self._visible_page.is_closed() else None
+            if page is None:
+                pages = [p for p in self.ctx.pages if not p.is_closed() and p.url not in ("about:blank", "")]
+                page = pages[-1] if pages else None
+            if page is None:
+                return {"html": "", "text": "", "json": [], "frames": [], "url": "", "ready": False}
+            return {"html": await page.content(), "text": await page.inner_text("body"), "json": [],
+                    "frames": [], "url": page.url, "ready": True}
+        return self.call(grab, 30)
+
     def capture_visible(self) -> tuple[str, str]:
         """HTML + URL of the tab the user is looking at (for Card Ladder and other capture)."""
         async def grab():

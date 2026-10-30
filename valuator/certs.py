@@ -5,6 +5,7 @@ its population loads via JavaScript so it isn't available here (enter it manuall
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -252,6 +253,116 @@ def parse_psa_page(html: str, cert: str) -> CertInfo:
     return info
 
 
+JSON_KEYS = {
+    "totalpopulation": "pop_total", "population": "pop_total", "pop": "pop_total", "gradepopulation": "pop_total",
+    "populationhigher": "pop_higher", "pophigher": "pop_higher", "higherpopulation": "pop_higher",
+    "subject": "name", "brand": "brand", "brandtitle": "brand", "year": "year", "cardnumber": "number",
+    "variety": "variant", "varietypedigree": "variant", "cardgrade": "grade_desc", "gradedescription": "grade_desc",
+    "itemgrade": "grade_desc", "category": "category", "specid": "spec_id", "certnumber": "cert",
+}
+
+
+def _walk_dicts(obj):
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _walk_dicts(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _walk_dicts(v)
+
+
+def _norm_key(k: str) -> str:
+    return re.sub(r"[^a-z]", "", str(k).lower())
+
+
+def _fields_from_json(blobs: list[str], cert: str) -> dict:
+    """Find the dict that best describes this cert anywhere in the page's JSON (API responses,
+    __NEXT_DATA__, embedded state) and map its keys to our fields."""
+    best, best_score = {}, 0
+    for blob in blobs:
+        candidates = []
+        try:
+            candidates.append(json.loads(blob))
+        except (ValueError, TypeError):
+            # embedded JSON inside HTML/script text
+            for m in re.finditer(r"<script[^>]*>(\{.*?\})</script>", blob, re.S):
+                try:
+                    candidates.append(json.loads(m.group(1)))
+                except ValueError:
+                    pass
+        for root in candidates:
+            for d in _walk_dicts(root):
+                mapped = {}
+                for k, v in d.items():
+                    f = JSON_KEYS.get(_norm_key(k))
+                    if f and v not in (None, "", [], {}) and not isinstance(v, (dict, list)):
+                        mapped.setdefault(f, str(v))
+                score = len(mapped) + (10 if mapped.get("cert", "").lstrip("0") == cert.lstrip("0") else 0)
+                if score > best_score:
+                    best, best_score = mapped, score
+    # last resort: key/value pairs anywhere in escaped/inline JS
+    if "pop_total" not in best or "pop_higher" not in best:
+        blob = "\n".join(blobs).replace('\\"', '"')
+        for key, field in (("TotalPopulation", "pop_total"), ("PopulationHigher", "pop_higher"),
+                           ("PopHigher", "pop_higher")):
+            m = re.search(rf'"{key}"\s*:\s*"?([\d,]+)', blob, re.I)
+            if m and field not in best:
+                best[field] = m.group(1)
+    return best
+
+
+POP_TEXT = [
+    (re.compile(r"(?:PSA\s+)?Pop(?:ulation)?\s+Higher\s*:?\s*([\d,]+)", re.I), "pop_higher"),
+    (re.compile(r"(?:Total\s+)?(?:PSA\s+)?Population(?!\s+Higher)\s*:?\s*([\d,]+)", re.I), "pop_total"),
+    (re.compile(r"\bPop\s*:?\s*([\d,]+)(?!\s*higher)", re.I), "pop_total"),
+]
+
+
+def parse_psa_render(data: dict, cert: str) -> CertInfo:
+    """Parse a PSA cert page that Chrome rendered (see BrowserService.open_and_read)."""
+    html, text = data.get("html", ""), data.get("text", "")
+    info = parse_psa_page(html, cert)
+    j = _fields_from_json(list(data.get("json") or []) + [html] + list(data.get("frames") or []), cert)
+    if not info.ok and j.get("name"):
+        brand = j.get("brand", "")
+        info = CertInfo("PSA", cert, name=j["name"].title(), set_name=_clean_set(brand), number=j.get("number", ""),
+                        year=j.get("year", ""), variant=j.get("variant", "").title(), language=_guess_lang(brand),
+                        game=_guess_game(brand, j.get("category", ""), j["name"]),
+                        grade=grade_number(j.get("grade_desc", "")), grade_desc=j.get("grade_desc", ""),
+                        url=PSA_PAGE_URL.format(cert=cert))
+        info.message = f"PSA {info.grade} · {info.year} {brand} {j['name']}".strip()
+    if not info.ok:
+        return info
+    for f in ("number", "year", "variant", "grade_desc"):
+        if not getattr(info, f) and j.get(f):
+            setattr(info, f, j[f].title() if f == "variant" else j[f])
+    if not info.grade:
+        info.grade = grade_number(info.grade_desc)
+    if info.pop_total is None:
+        info.pop_total = _int(j.get("pop_total"))
+    if info.pop_higher is None:
+        info.pop_higher = _int(j.get("pop_higher"))
+    for rx, field in POP_TEXT:
+        if getattr(info, field) is None:
+            m = rx.search(text)
+            if m:
+                setattr(info, field, _int(m.group(1)))
+    if info.pop_total is not None:
+        info.message += f" · pop {info.pop_total:,}" + (f" ({info.pop_higher:,} higher)" if info.pop_higher is not None else "")
+    return info
+
+
+def lookup_psa_visible(cert: str, browser) -> CertInfo:
+    data = browser.open_and_read(PSA_PAGE_URL.format(cert=cert), r"Subject|Brand/Title|Item Grade",
+                                 wait_s=60, site="PSA")
+    if not data.get("ready"):
+        return CertInfo("PSA", cert, ok=False, url=PSA_PAGE_URL.format(cert=cert),
+                        message="The PSA page is open in Chrome but didn't show the card yet – once it does, "
+                                "click 📄 Read page")
+    return parse_psa_render(data, cert)
+
+
 def lookup_psa_page(cert: str, session=None, browser=None) -> CertInfo:
     url = PSA_PAGE_URL.format(cert=cert)
     if browser is not None:
@@ -373,8 +484,16 @@ def lookup(grader: str, cert: str, settings: dict) -> CertInfo:
                 info = api
             else:
                 notes.append(f"PSA API: {api.message.split('.')[0]}")
-        if info is None:
-            page = _safe(lookup_psa_page, cert, None, br)
+        page_left_open = False
+        if info is None and br is not None and settings.get("psa_visible", True):
+            vis = _safe(lookup_psa_visible, cert, br)
+            if vis.ok:
+                info = vis
+            else:
+                notes.append(vis.message)
+                page_left_open = "open in Chrome" in vis.message
+        if info is None and not page_left_open:
+            page = _safe(lookup_psa_page, cert, None, None if settings.get("psa_visible", True) else br)
             info = page if page.ok else None
             if not page.ok:
                 notes.append(page.message)
